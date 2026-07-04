@@ -3,99 +3,70 @@ import requests
 from bs4 import BeautifulSoup
 import urllib.parse
 
-# 大甲國小營養午餐網頁首頁
-BASE_URL = "https://sites.google.com/tcps.tc.edu.tw/lunch"
-URL = f"{BASE_URL}/%E7%87%9F%E9%A4%8A%E5%8D%88%E9%A4%90%E8%8F%9C%E5%96%AE"
-
-def download_menu_by_keyword(keyword="115年6月"):
-    print(f"==========================================")
-    print(f"🚀 開始偵測網頁，尋找關鍵字: 【{keyword}】")
-    print(f"==========================================")
+def test_and_download():
+    # ⚠️ 1. 直接指定你要測試的月份與關鍵字
+    month_keyword = "115年6月"
+    file_keyword = "聯引"
+    
+    # 2. 學校 Google Sites 的標準子網頁命名規律
+    target_page_url = f"https://sites.google.com/tcps.tc.edu.tw/lunch/{urllib.parse.quote(month_keyword)}%E8%8F%9C%E5%96%AE"
+    print(f"🚀 直攻目標子網頁: {target_page_url}")
     
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     }
     
     try:
-        res = requests.get(URL, headers=headers)
-        res.raise_for_status()
-    except Exception as e:
-        print(f"❌ 網頁連線失敗: {e}")
-        return None
-
-    soup = BeautifulSoup(res.text, 'html.parser')
-    
-    # 1. 找出網頁上所有的超連結，並印出來除錯
-    links = soup.find_all('a')
-    print(f"ℹ️ 在首頁共找到 {len(links)} 個連結。")
-    
-    sub_page_url = None
-    
-    for link in links:
-        href = link.get('href', '')
-        text = link.get_text().strip()
-        decoded_href = urllib.parse.unquote(href)
-        
-        # 如果連結文字或網址包含月份關鍵字 (例如 115年6月)
-        if keyword in text or keyword in decoded_href:
-            print(f"🎯 找到符合月份的子網頁連結: 文字【{text}】-> 網址【{href}】")
-            if href.startswith('/'):
-                sub_page_url = "https://sites.google.com" + href
-            else:
-                sub_page_url = href
-            break
-
-    # 如果在首頁找不到月份，試著直接拼接常見的 Google Sites 網址結構
-    if not sub_page_url:
-        print(f"⚠️ 首頁未直接發現連結，嘗試直接拼接子網頁網址...")
-        sub_page_url = f"{BASE_URL}/%E{keyword}菜單" 
-        # 範例: https://sites.google.com/tcps.tc.edu.tw/lunch/115年6月菜單
-
-    print(f"📂 正在進入子網頁嘗試抓取實際檔案: {sub_page_url}")
-    
-    try:
-        sub_res = requests.get(sub_page_url, headers=headers)
-        sub_soup = BeautifulSoup(sub_res.text, 'html.parser')
-        sub_links = sub_soup.find_all('a')
-        
-        target_file_url = None
-        # 在子網頁中尋找含有「聯引」或 Google Drive 的下載連結
-        for sub_link in sub_links:
-            s_href = sub_link.get('href', '')
-            s_text = sub_link.get_text().strip()
-            s_decoded = urllib.parse.unquote(s_href)
+        res = requests.get(target_page_url, headers=headers)
+        if res.status_code == 404:
+            print("❌ 找不到該月份的網頁，請檢查月份關鍵字是否輸入正確（例如：115年6月）。")
+            return
             
-            print(f"  [偵測到子網頁連結] 文字: {s_text} | 網址: {s_href[:60]}...")
-            
-            if "drive.google.com" in s_href or "docs.google.com" in s_href:
-                target_file_url = s_href
-                print(f"✨ 成功捕捉到 Google 雲端硬碟元件！")
-                break
-    except Exception as e:
-        print(f"❌ 讀取子網頁失敗: {e}")
-        return None
-
-    if not target_file_url:
-        print(f"❌ 無法在網頁中解析出 Excel 檔案的直接下載點。")
-        return None
-
-    # 2. 轉換為直接下載連結
-    if "drive.google.com" in target_file_url and "/file/d/" in target_file_url:
-        file_id = target_file_url.split("/file/d/")[1].split("/")[0]
-        download_url = f"https://docs.google.com/uc?export=download&id={file_id}"
-    else:
-        download_url = target_file_url
-
-    # 3. 下載檔案
-    print(f"📥 開始下載目標 Excel...")
-    file_res = requests.get(download_url, headers=headers)
-    local_filename = f"downloaded_{keyword}.xlsx"
-    with open(local_filename, "wb") as f:
-        f.write(file_res.content)
+        # 3. 關鍵突破：直接搜尋網頁原始碼裡面的所有 Google Drive 檔案 ID
+        # Google 內嵌元件會把 ID 藏在網址或 data 屬性裡
+        content_str = res.text
         
-    print(f"🎉 檔案下載成功，儲存於: {local_filename}")
-    return local_filename
+        # 我們要在原始碼中找出所有含有 drive.google.com/file/d/ 或 spreadsheets/d/ 的字串
+        import re
+        # 尋找 Google Drive 檔案 ID 的正規表示式
+        drive_ids = re.findall(r'https://drive\.google\.com/file/d/([a-zA-Z0-9-_]+)', content_str)
+        sheet_ids = re.findall(r'https://docs\.google\.com/spreadsheets/d/([a-zA-Z0-9-_]+)', content_str)
+        
+        # 合併所有找到的 ID
+        all_ids = list(set(drive_ids + sheet_ids))
+        print(f"ℹ️ 在網頁原始碼中偵測到 {len(all_ids)} 個潛在的 Google 雲端檔案。")
+        
+        if not all_ids:
+            print("❌ 無法從網頁解析出任何雲端檔案 ID。")
+            return
+
+        # 4. 逐一比對檔案名稱是否符合「聯引」
+        # 透過 Google Drive API 的公開節點去抓取檔案名稱
+        for file_id in all_ids:
+            meta_url = f"https://docs.google.com/spreadsheets/d/{file_id}/edit"
+            meta_res = requests.get(meta_url, headers=headers)
+            
+            # 檢查這個檔案的標題是否包含「聯引」
+            if file_keyword in meta_res.text or file_keyword in urllib.parse.unquote(meta_res.text):
+                print(f"🎯 命中目標！找到同時符合 【{month_keyword}】與【{file_keyword}】的檔案！")
+                
+                # 5. 執行直接下載
+                download_url = f"https://docs.google.com/spreadsheets/d/{file_id}/export?format=xlsx"
+                print("📥 開始高速下載 Excel 檔案...")
+                
+                file_data = requests.get(download_url, headers=headers).content
+                output_name = f"downloaded_{month_keyword}_{file_keyword}.xlsx"
+                
+                with open(output_name, "wb") as f:
+                    f.write(file_data)
+                    
+                print(f"🎉 成功！檔案已存為: {output_name}")
+                return
+                
+        print(f"❌ 雖然找到了雲端檔案，但沒有一個名稱含有【{file_keyword}】。")
+
+    except Exception as e:
+        print(f"💥 發生錯誤: {e}")
 
 if __name__ == "__main__":
-    # 先測試抓取 115年6月 的菜單
-    download_menu_by_keyword("115年6月")
+    test_and_download()
