@@ -1,18 +1,38 @@
-steps:
-    - name: 複製專案程式碼
+name: Auto Download School Menu
+
+on:
+  workflow_dispatch: # 保持手動按鈕功能
+
+jobs:
+  run-scraper:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
       uses: actions/checkout@v3
 
-    - name: 設定 Python 環境
-      uses: actions/automating-python@v4 # 或者是你原本用的 setup-python@v4
+    - name: Set up Python
+      uses: actions/setup-python@v4
       with:
         python-version: '3.10'
 
-    - name: 安裝 Python 依賴套件
-      run: pip install -r requirements.txt
+    - name: Install dependencies
+      run: |
+        pip install --upgrade pip
+        pip install -r requirements.txt
 
-    # 🛠️ 關鍵新增這一行，幫雲端電腦裝上瀏覽器
-    - name: 安裝 Playwright 瀏覽器核心
-      run: playwright install chromium
+    - name: Install Playwright Chromium
+      run: |
+        pip install playwright
+        playwright install chromium
 
-    - name: 執行爬蟲腳本
+    - name: Run Scraper Script
       run: python main.py
+
+    - name: Commit and Push Changes
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git add .
+        # 只有當真的有下載到新檔案時才存檔，避免沒檔案時報錯
+        git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-downloaded menu file" && git push)
