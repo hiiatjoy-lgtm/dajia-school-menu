@@ -1,14 +1,16 @@
-name: Auto Download School Menu
+name: Auto Update Lunch Menu Image
 
 on:
-  workflow_dispatch:
+  schedule:
+    # 每天定時在台灣時間下午 5:00 (UTC 9:00) 檢查一次
+    - cron: '0 9 * * *'
+  workflow_dispatch: # 保留手動按鈕，方便你隨時測試
 
-# 🛠️ 關鍵修正：強制開啟 GitHub Actions 的讀寫權限，不讓它因為權限不夠亮紅燈！
 permissions:
   contents: write
 
 jobs:
-  run-scraper:
+  build-and-run:
     runs-on: ubuntu-latest
 
     steps:
@@ -24,16 +26,12 @@ jobs:
       run: |
         pip install -r requirements.txt
 
-    - name: Run Scraper Script
+    - name: Run Scraper and Convert to Image
       run: python main.py
 
     - name: Commit and Push Changes
       run: |
         git config --global user.name "github-actions[bot]"
         git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-        
-        # 強制把所有變更（不論是新增 menu.xlsx 還是刪除舊檔）都拉進來
-        git add -A
-        
-        # 檢查是否有檔案變更，有的話就大膽推上去
-        git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-downloaded menu file" && git push)
+        git add menu.xlsx menu.png
+        git diff --quiet && git diff --staged --quiet || (git commit -m "Auto update menu and image" && git push)
