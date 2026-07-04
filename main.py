@@ -31,8 +31,14 @@ def get_next_month_strings():
     tw_year = next_month_date.year - 1911
     return f"{tw_year}年{next_month_date.month}月"
 
+def get_current_month_strings():
+    """獲取當前月份字串（例如 115年7月），用於平常日顯示提示"""
+    today = datetime.date.today()
+    tw_year = today.year - 1911
+    return f"{tw_year}年{today.month}月"
+
 def generate_no_menu_html(target_month):
-    """當尋找不到符合檔案時，自動生成提示網頁"""
+    """自動生成提示網頁"""
     print(f"⚠️ 顯示提示：目前尚未提供 {target_month} 菜單")
     html_content = f"""<!DOCTYPE html>
 <html lang="zh-TW">
@@ -119,21 +125,17 @@ def build_menu_html(target_month, df):
     print("🎉 菜單網頁 index.html 更新成功並已直接覆蓋舊檔案！")
 
 def check_and_download_link(session, link, headers, thread_id):
-    """【極速執行緒專用】獨立對單個雲端檔案進行快取下載與分頁結構檢查"""
     export_url = f"{link}/export?format=xlsx"
     temp_filename = f"temp_{thread_id}.xlsx"
     try:
         test_res = session.get(export_url, headers=headers, timeout=8)
-        if test_res.content[:2] == b'PK':  # 確認是 Zip/Excel 檔案格式
+        if test_res.content[:2] == b'PK':
             with open(temp_filename, "wb") as tmp:
                 tmp.write(test_res.content)
-            
             xl = pd.ExcelFile(temp_filename)
             target_sheets = [s for s in xl.sheet_names if "聯引" in s and "素食" not in s]
-            
             if target_sheets:
                 df = pd.read_excel(temp_filename, sheet_name=target_sheets[0])
-                if os.path.exists(temp_filename): os.remove(temp_filename)
                 return df
     except:
         pass
@@ -142,9 +144,11 @@ def check_and_download_link(session, link, headers, thread_id):
     return None
 
 def run_scraper():
-    # 1. 日期守衛：不是月底最後一個平日自動跳過
+    # 🛠️ 邏輯修正：如果今天「不是」月底，則主動確保網頁顯示當月「尚未提供菜單」提示，避免殘留上月舊測試數據
     if not is_last_workday_of_month():
-        print("📅 今天不是當月的最後一個平日，自動跳過執行。")
+        current_month = get_current_month_strings()
+        print(f"📅 今天不是月底最後一個平日。自動將網頁重置為『目前尚未提供 {current_month} 菜單』。")
+        generate_no_menu_html(current_month)
         return
 
     target_month = get_next_month_strings()
@@ -155,7 +159,6 @@ def run_scraper():
     }
     base_url = "https://sites.google.com/tcps.tc.edu.tw/lunch/%E7%87%9F%E9%A4%8A%E5%8D%88%E9%A4%90%E8%8F%9C%E5%96%AE"
     
-    # 建立連線池 Session 物件優化網路效能
     with requests.Session() as session:
         try:
             res = session.get(base_url, headers=headers, timeout=12)
@@ -182,14 +185,12 @@ def run_scraper():
             print(f"⚡ 找到 {len(drive_links)} 個潛在檔案，開啟多執行緒並發流洗篩選...")
             selected_df = None
             
-            # 使用 ThreadPoolExecutor 同時派發網路請求工作，最大加速運算速度
             with ThreadPoolExecutor(max_workers=min(len(drive_links), 5)) as executor:
                 futures = {executor.submit(check_and_download_link, session, link, headers, idx): link for idx, link in enumerate(drive_links)}
                 for future in as_completed(futures):
                     result_df = future.result()
                     if result_df is not None:
                         selected_df = result_df
-                        # 只要其中一組執行緒搶先命中目標，立刻強行中斷其它線程，達到最高效能
                         break 
             
             if selected_df is not None:
