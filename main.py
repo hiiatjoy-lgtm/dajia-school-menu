@@ -4,6 +4,7 @@ from bs4 import BeautifulSoup
 import re
 import datetime
 import pandas as pd
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 def is_last_workday_of_month():
@@ -38,25 +39,31 @@ def get_current_month_strings():
     return f"{tw_year}年{today.month}月"
 
 def generate_no_menu_html(target_month):
-    """自動生成提示網頁"""
+    """自動生成提示網頁（加入防快取 Meta 標籤與動態時間戳）"""
     print(f"⚠️ 顯示提示：目前尚未提供 {target_month} 菜單")
+    timestamp = int(time.time())
     html_content = f"""<!DOCTYPE html>
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     <title>大甲國小 午餐菜單</title>
     <style>
         body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-color: #f3f4f6; margin: 0; padding: 20px; display: flex; align-items: center; justify-content: center; min-height: 80vh; }}
         .card {{ max-width: 400px; background: white; padding: 30px; border-radius: 16px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); text-align: center; }}
         h1 {{ color: #dc2626; font-size: 22px; margin-bottom: 10px; }}
         p {{ color: #4b5563; font-size: 15px; line-height: 1.6; }}
+        .ts {{ font-size: 10px; color: #9ca3af; margin-top: 20px; }}
     </style>
 </head>
 <body>
     <div class="card">
         <h1>🍱 菜單尚未更新</h1>
         <p>學校目前尚未提供 <strong>{target_month}</strong> 的聯引午餐菜單數據。<br>請稍後再試，系統將會定時自動嘗試同步！</p>
+        <div class="ts">系統重置時間戳記：{timestamp}</div>
     </div>
 </body>
 </html>
@@ -65,12 +72,16 @@ def generate_no_menu_html(target_month):
         f.write(html_content)
 
 def build_menu_html(target_month, df):
-    """將解析成功的 Excel 資料轉換為正式精美網頁，直接覆蓋原本內容"""
+    """將解析成功的 Excel 資料轉換為正式精美網頁（加入防快取 Meta 標籤）"""
+    timestamp = int(time.time())
     html_content = f"""<!DOCTYPE html>
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=2.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     <title>大甲國小 {target_month} 午餐菜單</title>
     <style>
         body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; background-color: #f3f4f6; margin: 0; padding: 12px; color: #1f2937; }}
@@ -112,10 +123,10 @@ def build_menu_html(target_month, df):
                     <td class="dish-col">{dishes_text}</td>
                 </tr>"""
                 
-    html_content += """
+    html_content += f"""
             </tbody>
         </table>
-        <div class="footer">💡 小提示：手指雙擊或雙指往外張開可放大檢視<br>本資料由大甲國小午餐系統自動同步</div>
+        <div class="footer">💡 小提示：手指雙擊或雙指往外張開可放大檢視<br>本資料由大甲國小午餐系統自動同步<br>同步時間戳：{timestamp}</div>
     </div>
 </body>
 </html>
@@ -144,7 +155,6 @@ def check_and_download_link(session, link, headers, thread_id):
     return None
 
 def run_scraper():
-    # 🛠️ 邏輯修正：如果今天「不是」月底，則主動確保網頁顯示當月「尚未提供菜單」提示，避免殘留上月舊測試數據
     if not is_last_workday_of_month():
         current_month = get_current_month_strings()
         print(f"📅 今天不是月底最後一個平日。自動將網頁重置為『目前尚未提供 {current_month} 菜單』。")
