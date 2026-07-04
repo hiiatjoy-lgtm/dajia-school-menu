@@ -68,7 +68,7 @@ def download_menu_by_keyword(keyword="聯引"):
 
 if __name__ == "__main__":
     # 執行下載
-    excel_file = download_menu_by_keyword("聯引")
+    excel_file = download_menu_by_keyword("115年6月聯引")
     
     if excel_file:
         # 接下來可以在這裡接續續上一次寫的「Excel 轉圖片」程式碼
