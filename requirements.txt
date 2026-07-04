@@ -1,5 +1,2 @@
-requests
+playwright
 beautifulsoup4
-pandas
-openpyxl
-matplotlib
