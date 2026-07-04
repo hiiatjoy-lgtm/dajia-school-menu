@@ -2,9 +2,8 @@ name: Auto Update Lunch Menu Image
 
 on:
   schedule:
-    # 每天定時在台灣時間下午 5:00 (UTC 9:00) 檢查一次
     - cron: '0 9 * * *'
-  workflow_dispatch: # 保留手動按鈕，方便你隨時測試
+  workflow_dispatch: 
 
 permissions:
   contents: write
@@ -33,5 +32,5 @@ jobs:
       run: |
         git config --global user.name "github-actions[bot]"
         git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-        git add menu.xlsx menu.png
-        git diff --quiet && git diff --staged --quiet || (git commit -m "Auto update menu and image" && git push)
+        git add -A
+        git diff --quiet && git diff --staged --quiet || (git commit -m "Auto update menu and web files" && git push)
