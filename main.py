@@ -4,18 +4,16 @@ from bs4 import BeautifulSoup
 import re
 import datetime
 import pandas as pd
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 def is_last_workday_of_month():
     """自動判斷今天是否為當月最後一個平日（週一至週五）"""
     today = datetime.date.today()
-    
-    # 找出當月最後一天
     if today.month == 12:
         last_day = datetime.date(today.year, 12, 31)
     else:
         last_day = datetime.date(today.year, today.month + 1, 1) - datetime.timedelta(days=1)
     
-    # 從最後一天往回找第一個平日（排除週六 5、週日 6）
     last_workday = last_day
     while last_workday.weekday() >= 5:
         last_workday -= datetime.timedelta(days=1)
@@ -95,13 +93,10 @@ def build_menu_html(target_month, df):
             </thead>
             <tbody>
     """
-    
-    # 智慧型解析各校欄位：尋找含有日期與菜色特徵的欄位進行橫向合併
     for idx, row in df.iterrows():
         row_values = [str(v).strip() for v in row.values if pd.notna(v) and str(v).strip() != '']
         if len(row_values) >= 2:
             date_text = row_values[0]
-            # 排除非菜單內容的表頭
             if "日期" in date_text or "月" not in date_text:
                 continue
             dishes_text = "、".join(row_values[1:])
@@ -123,83 +118,89 @@ def build_menu_html(target_month, df):
         f.write(html_content)
     print("🎉 菜單網頁 index.html 更新成功並已直接覆蓋舊檔案！")
 
+def check_and_download_link(session, link, headers, thread_id):
+    """【極速執行緒專用】獨立對單個雲端檔案進行快取下載與分頁結構檢查"""
+    export_url = f"{link}/export?format=xlsx"
+    temp_filename = f"temp_{thread_id}.xlsx"
+    try:
+        test_res = session.get(export_url, headers=headers, timeout=8)
+        if test_res.content[:2] == b'PK':  # 確認是 Zip/Excel 檔案格式
+            with open(temp_filename, "wb") as tmp:
+                tmp.write(test_res.content)
+            
+            xl = pd.ExcelFile(temp_filename)
+            target_sheets = [s for s in xl.sheet_names if "聯引" in s and "素食" not in s]
+            
+            if target_sheets:
+                df = pd.read_excel(temp_filename, sheet_name=target_sheets[0])
+                if os.path.exists(temp_filename): os.remove(temp_filename)
+                return df
+    except:
+        pass
+    finally:
+        if os.path.exists(temp_filename): os.remove(temp_filename)
+    return None
+
 def run_scraper():
-    # 1. 日期安全守衛：不是月底最後一個平日，直接退出不工作
+    # 1. 日期守衛：不是月底最後一個平日自動跳過
     if not is_last_workday_of_month():
         print("📅 今天不是當月的最後一個平日，自動跳過執行。")
         return
 
     target_month = get_next_month_strings()
-    print(f"🎯 觸發排程！開始自動抓取下個月菜單目標：{target_month}")
+    print(f"🎯 觸發排程！開始極速並行抓取下個月菜單目標：{target_month}")
     
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     }
     base_url = "https://sites.google.com/tcps.tc.edu.tw/lunch/%E7%87%9F%E9%A4%8A%E5%8D%88%E9%A4%90%E8%8F%9C%E5%96%AE"
     
-    try:
-        res = requests.get(base_url, headers=headers, timeout=15)
-        soup = BeautifulSoup(res.text, 'html.parser')
-        
-        # 尋找目標月份的子網頁連結
-        sub_page_url = None
-        for a_tag in soup.find_all('a', href=True):
-            if target_month in a_tag.text or target_month in a_tag['href']:
-                href = a_tag['href']
-                sub_page_url = href if href.startswith('http') else f"https://sites.google.com{href}"
-                break
-                
-        if not sub_page_url:
-            sub_page_url = f"https://sites.google.com/tcps.tc.edu.tw/lunch/{target_month}%E8%8F%9C%E5%96%AE"
+    # 建立連線池 Session 物件優化網路效能
+    with requests.Session() as session:
+        try:
+            res = session.get(base_url, headers=headers, timeout=12)
+            soup = BeautifulSoup(res.text, 'html.parser')
+            
+            sub_page_url = None
+            for a_tag in soup.find_all('a', href=True):
+                if target_month in a_tag.text or target_month in a_tag['href']:
+                    href = a_tag['href']
+                    sub_page_url = href if href.startswith('http') else f"https://sites.google.com{href}"
+                    break
+                    
+            if not sub_page_url:
+                sub_page_url = f"https://sites.google.com/tcps.tc.edu.tw/lunch/{target_month}%E8%8F%9C%E5%96%AE"
 
-        print(f"📡 進入月份網頁: {sub_page_url}")
-        sub_res = requests.get(sub_page_url, headers=headers, timeout=15)
-        
-        # 抓取頁面所有 Google Drive 連結
-        drive_links = re.findall(r'https://docs\.google\.com/spreadsheets/d/[\w-]+', sub_res.text)
-        if not drive_links:
-            generate_no_menu_html(target_month)
-            return
+            print(f"📡 進入月份網頁: {sub_page_url}")
+            sub_res = session.get(sub_page_url, headers=headers, timeout=12)
             
-        drive_links = list(set(drive_links))
-        selected_df = None
-        
-        # 橫向比對所有檔案
-        for link in drive_links:
-            export_url = f"{link}/export?format=xlsx"
-            try:
-                test_res = requests.get(export_url, headers=headers, timeout=10)
-                if test_res.content[:2] == b'PK':
-                    with open("temp.xlsx", "wb") as tmp:
-                        tmp.write(test_res.content)
-                    
-                    xl = pd.ExcelFile("temp.xlsx")
-                    # 篩選分頁名稱：包含「聯引」且排除「素食」
-                    target_sheets = [s for s in xl.sheet_names if "聯引" in s and "素食" not in s]
-                    
-                    if target_sheets:
-                        selected_df = pd.read_excel("temp.xlsx", sheet_name=target_sheets[0])
-                        # 同時儲存原始 xlsx 備份
-                        with open("menu.xlsx", "wb") as f:
-                            f.write(test_res.content)
-                        break
-            except:
-                pass
-            finally:
-                if os.path.exists("temp.xlsx"): os.remove("temp.xlsx")
+            drive_links = list(set(re.findall(r'https://docs\.google\.com/spreadsheets/d/[\w-]+', sub_res.text)))
+            if not drive_links:
+                generate_no_menu_html(target_month)
+                return
                 
-        # 判斷最後篩選結果
-        if selected_df is not None:
-            # 清除空列並渲染成 HTML
-            selected_df = selected_df.dropna(how='all').fillna('')
-            build_menu_html(target_month, selected_df)
-        else:
-            # 搜尋不到符合選項的檔案
-            generate_no_menu_html(target_month)
+            print(f"⚡ 找到 {len(drive_links)} 個潛在檔案，開啟多執行緒並發流洗篩選...")
+            selected_df = None
             
-    except Exception as e:
-        print(f"💥 發生錯誤: {e}")
-        generate_no_menu_html(target_month)
+            # 使用 ThreadPoolExecutor 同時派發網路請求工作，最大加速運算速度
+            with ThreadPoolExecutor(max_workers=min(len(drive_links), 5)) as executor:
+                futures = {executor.submit(check_and_download_link, session, link, headers, idx): link for idx, link in enumerate(drive_links)}
+                for future in as_completed(futures):
+                    result_df = future.result()
+                    if result_df is not None:
+                        selected_df = result_df
+                        # 只要其中一組執行緒搶先命中目標，立刻強行中斷其它線程，達到最高效能
+                        break 
+            
+            if selected_df is not None:
+                selected_df = selected_df.dropna(how='all').fillna('')
+                build_menu_html(target_month, selected_df)
+            else:
+                generate_no_menu_html(target_month)
+                
+        except Exception as e:
+            print(f"💥 發生錯誤: {e}")
+            generate_no_menu_html(target_month)
 
 if __name__ == "__main__":
     run_scraper()
