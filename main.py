@@ -11,33 +11,16 @@ plt.rcParams['font.sans-serif'] = ['Microsoft JhengHei', 'Arial', 'sans-serif']
 plt.rcParams['axes.unicode_minus'] = False
 
 def is_last_workday_of_month():
-    """判斷今天是否為當月最後一個平日（週一至週五）"""
-    today = datetime.date.today()
-    # 測試用：如果要手動測試，可以直接回傳 True
-    # return True 
-    
-    # 找出當月最後一天
-    if today.month == 12:
-        last_day = datetime.date(today.year, 12, 31)
-    else:
-        last_day = datetime.date(today.year, today.month + 1, 1) - datetime.timedelta(days=1)
-    
-    # 從最後一天往回找第一個平日
-    last_workday = last_day
-    while last_workday.weekday() >= 5:  # 5是週六，6是週日
-        last_workday -= datetime.timedelta(days=1)
-        
-    return today == last_workday
+    """【測試模式】強制放行，不檢查是否為月底平日"""
+    return True
 
 def get_next_month_strings():
-    """獲取下個月的年份與月份中文字串（例如 115年8月）"""
+    """獲取下個月的年份與月份中文字串"""
     today = datetime.date.today()
     if today.month == 12:
         next_month_date = datetime.date(today.year + 1, 1, 1)
     else:
         next_month_date = datetime.date(today.year, today.month + 1, 1)
-        
-    # 轉換為民國年
     tw_year = next_month_date.year - 1911
     return f"{tw_year}年{next_month_date.month}月"
 
@@ -56,7 +39,7 @@ def convert_excel_to_image(excel_path, image_path):
         
         # 繪製表格
         table = ax.table(cellText=df.values, colLabels=df.columns, loc='center', cellLoc='center')
-        table.auto_set_font_size(false)
+        table.auto_set_font_size(False)
         table.set_fontsize(10)
         table.scale(1.2, 1.5)  # 放大表格格子寬度與高度
         
@@ -79,8 +62,9 @@ def run_scraper():
         print("📅 今天不是當月的最後一個平日，跳過執行。")
         return
 
-    target_month = get_next_month_strings()
-    print(f"🎯 觸發排程！開始抓取下個月菜單目標：{target_month}")
+    # 🎯 測試模式：直接鎖定 115年6月 菜單
+    target_month = "115年6月"
+    print(f"🎯 [測試模式啟動] 開始抓取菜單目標：{target_month}")
     
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
@@ -108,32 +92,25 @@ def run_scraper():
         sub_res = requests.get(sub_page_url, headers=headers, timeout=15)
         
         # 2. 搜尋 Google Drive 下載點或試算表 ID
-        # 尋找網頁中符合大甲國小發布的試算表匯出連結
         drive_links = re.findall(r'https://docs\.google\.com/spreadsheets/d/[\w-]+', sub_res.text)
         
         if not drive_links:
             print("❌ 無法在網頁中自動解析出 Google 試算表連結。")
             return
             
-        # 去重
         drive_links = list(set(drive_links))
         print(f"🔍 找到 {len(drive_links)} 個雲端檔案，準備篩選...")
         
-        # 3. 精準篩選：依據大甲國小後台結構，將其導向為直接匯出 XLSX 格式
-        # 由於網頁內部元件可能加密，此處動態下載並檢查檔案標題或屬性
+        # 3. 精準篩選
         selected_url = None
         for link in drive_links:
-            # 轉換為匯出格式連結
             export_url = f"{link}/export?format=xlsx"
             test_res = requests.get(export_url, headers=headers, timeout=10)
             
-            # 檢查是否為 Excel 檔且符合關鍵字需求
             if test_res.content[:2] == b'PK':
-                # 暫存讀取檢查
                 with open("temp.xlsx", "wb") as tmp:
                     tmp.write(test_res.content)
                 
-                # 這裡大甲國小通常會在檔案內的第一列或頁籤標示「聯引」
                 try:
                     xl = pd.ExcelFile("temp.xlsx")
                     sheet_names = "".join(xl.sheet_names)
@@ -143,7 +120,6 @@ def run_scraper():
                 except:
                     pass
                     
-        # 如果動態比對失敗，則採用該月份標準聯引的預設下載渠道
         if not selected_url:
             print("💡 啟用大甲國小標準聯引渠道下載...")
             selected_url = "https://docs.google.com/spreadsheets/d/1U4M_0_SgIcl3mCH70Z7GjC1kE9MshLpE1YF-A_ZpZsc/export?format=xlsx"
@@ -158,7 +134,6 @@ def run_scraper():
         # 5. 觸發轉圖
         convert_excel_to_image("menu.xlsx", "menu.png")
         
-        # 清理暫存檔
         if os.path.exists("temp.xlsx"): os.remove("temp.xlsx")
         
     except Exception as e:
