@@ -1,128 +1,98 @@
 import os
 import requests
-from bs4 import BeautifulSoup
-import urllib.parse
 import re
+import urllib.parse
+import json
 
-# 大甲國小午餐菜單總首頁
-MENU_HOME_URL = "https://sites.google.com/tcps.tc.edu.tw/lunch/%E7%87%9F%E9%A4%8A%E5%8D%88%E9%A4%90%E8%8F%9C%E5%96%AE"
-
-def run_menu_scraper():
-    # ⚠️ 設定要找尋的「月份網站關鍵字」與「檔案關鍵字」
+def ultimate_google_sites_scraper():
     month_keyword = "115年6月"
     file_keyword = "聯引"
     
-    print(f"==========================================")
-    print(f"第一階段：正在總網頁中找尋【{month_keyword}】的菜單網站...")
-    print(f"==========================================")
+    # 這是大甲國小午餐菜單的主網頁
+    base_url = "https://sites.google.com/tcps.tc.edu.tw/lunch/%E7%87%9F%E9%A4%8A%E5%8D%88%E9%A4%90%E8%8F%9C%E5%96%AE"
+    print(f"🚀 [第一階段] 正在掃描主要網頁...")
     
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     }
     
     try:
-        res = requests.get(MENU_HOME_URL, headers=headers)
+        res = requests.get(base_url, headers=headers)
         res.raise_for_status()
-    except Exception as e:
-        print(f"❌ 無法連線至午餐菜單首頁: {e}")
-        return
-
-    soup = BeautifulSoup(res.text, 'html.parser')
-    all_links = soup.find_all('a')
-    
-    target_month_url = None
-    
-    # 遍歷首頁所有超連結，找尋月份網站
-    for link in all_links:
-        href = link.get('href', '')
-        text = link.get_text().strip()
-        decoded_href = urllib.parse.unquote(href)
         
-        # 只要連結文字或網址本身包含月份（如 115年6月）
-        if month_keyword in text or month_keyword in decoded_href:
-            print(f"🎯 成功找到【{month_keyword}】的網站連結！")
-            print(f"   ➔ 顯示文字: {text}")
-            
-            if href.startswith('/'):
-                target_month_url = "https://sites.google.com" + href
-            else:
-                target_month_url = href
-            break
-
-    # 如果首頁沒撈到月份網站，使用安全備用路徑直接前往子網頁
-    if not target_month_url:
-        print(f"⚠️ 首頁連結未直接顯露，改由路徑直接前往月份子網頁...")
-        target_month_url = f"https://sites.google.com/tcps.tc.edu.tw/lunch/{urllib.parse.quote(month_keyword)}%E8%8F%9C%E5%96%AE"
-
-    print(f"\n==========================================")
-    print(f"第二階段：進入月份網站，找尋含有【{file_keyword}】的 xlsx 檔案...")
-    print(f"導向網址: {target_month_url}")
-    print(f"==========================================")
-    
-    try:
-        month_res = requests.get(target_month_url, headers=headers)
-        if month_res.status_code == 404:
-            print(f"❌ 月份子網站回傳 404 找不到網頁，請確認【{month_keyword}】名稱是否與學校網站一致。")
-            return
-            
-        month_soup = BeautifulSoup(month_res.text, 'html.parser')
+        # 1. 關鍵突破：尋找 Google Sites 的內嵌網頁資料區塊
+        # Google 會把整個網站的結構包在一個特定的 JavaScript 變數或 JSON 欄位中
+        html_content = res.text
         
-        # 策略 A：尋找網頁上顯露出的所有實體 A 標籤連結
-        month_links = month_soup.find_all('a')
-        file_id = None
+        # 尋找所有可能的子網頁路徑（模糊搜尋 115年6月 的網址編碼）
+        print("🔍 正在解析網頁內的隱藏結構...")
         
-        for m_link in month_links:
-            m_href = m_link.get('href', '')
-            m_text = m_link.get_text().strip()
-            m_decoded = urllib.parse.unquote(m_href)
-            
-            # 如果發現連結或文字同時含有「聯引」，且指向 Google 雲端
-            if file_keyword in m_text or file_keyword in m_decoded:
-                if "drive.google.com" in m_href or "docs.google.com" in m_href:
-                    print(f"✨ 從網頁連結標籤中找到完全符合條件的檔案！")
-                    print(f"   ➔ 檔案標題: {m_text}")
-                    # 擷取 File ID
-                    id_match = re.search(r'/d/([a-zA-Z0-9-_]+)', m_href) or re.search(r'id=([a-zA-Z0-9-_]+)', m_href)
-                    if id_match:
-                        file_id = id_match.group(1)
-                        break
-
-        # 策略 B：如果策略 A 沒找到（通常是因為 Google 內嵌元件），則從整網頁原始碼進行深層搜尋
-        if not file_id:
-            print("ℹ️ 未從一般超連結找到檔案，啟動原始碼深層比對...")
-            # 撈出原始碼中所有可能的 Google 文件/試算表 ID
-            potential_ids = list(set(re.findall(r'https://docs\.google\.com/spreadsheets/d/([a-zA-Z0-9-_]+)', month_res.text) + 
-                                     re.findall(r'https://drive\.google\.com/file/d/([a-zA-Z0-9-_]+)', month_res.text) +
-                                     re.findall(r'docId=([a-zA-Z0-9-_]{20,})', month_res.text)))
-            
-            print(f"ℹ️ 在該月份網頁背後共偵測到 {len(potential_ids)} 個隱藏雲端文件元件。")
-            
-            for pid in potential_ids:
-                # 測試該雲端文件的標題
-                test_meta_url = f"https://docs.google.com/spreadsheets/d/{pid}/edit"
-                meta_res = requests.get(test_meta_url, headers=headers)
-                if file_keyword in meta_res.text or file_keyword in urllib.parse.unquote(meta_res.text):
-                    print(f"🎯 成功匹配隱藏元件！此檔案名稱含有【{file_keyword}】。")
-                    file_id = pid
-                    break
-                    
-        # 第三階段：執行檔案下載
-        if file_id:
-            download_url = f"https://docs.google.com/spreadsheets/d/{file_id}/export?format=xlsx"
-            print(f"📥 正在高速下載 Excel 檔案 (ID: {file_id})...")
-            
-            final_file_res = requests.get(download_url, headers=headers)
-            output_filename = f"downloaded_{month_keyword}_{file_keyword}.xlsx"
-            
-            with open(output_filename, "wb") as f:
-                f.write(final_file_res.content)
+        # 2. 如果沒抓到子網頁，我們直接用強力的萬用手法：
+        # 既然是 Google 試算表，我們直接用正則表達式把整頁網頁（含子網頁）只要有出現過的 Google ID 通通打包
+        # 這是最暴力的作法，不管是內嵌、按鈕、連結，只要在記憶體裡出現過就抓
+        
+        # 直接抓取主要頁面與潛在子頁面
+        urls_to_check = [base_url]
+        
+        # 嘗試拼湊可能的正確子網頁網址（處理編碼問題）
+        encoded_month = urllib.parse.quote(month_keyword)
+        urls_to_check.append(f"https://sites.google.com/tcps.tc.edu.tw/lunch/{encoded_month}%E8%8F%9C%E5%96%AE")
+        urls_to_check.append(f"https://sites.google.com/tcps.tc.edu.tw/lunch/{encoded_month}")
+        
+        all_found_ids = []
+        
+        for url in urls_to_check:
+            print(f"📡 正在深挖網址: {url}")
+            try:
+                sub_res = requests.get(url, headers=headers)
+                if sub_res.status_code == 200:
+                    text = sub_res.text
+                    # 擷取所有可能是 Google Drive / Sheets 的 ID (長度通常在 25-50 個字元之間的英數與符號組合)
+                    ids = re.findall(r'https://docs\.google\.com/spreadsheets/d/([a-zA-Z0-9-_]+)', text)
+                    ids += re.findall(r'https://drive\.google\.com/file/d/([a-zA-Z0-9-_]+)', text)
+                    ids += re.findall(r'"docId"\s*:\s*"([a-zA-Z0-9-_]+)"', text)
+                    ids += re.findall(r'docId=([a-zA-Z0-9-_]+)', text)
+                    all_found_ids.extend(ids)
+            except:
+                continue
                 
-            print(f"🎉【測試成功】檔案已成功存入您的 GitHub 專案首域，檔名為: {output_filename}")
-        else:
-            print(f"❌ 遺憾，無法在【{month_keyword}】的網頁中定位出含有【{file_keyword}】的 xlsx 檔案。")
-            
+        all_found_ids = list(set(all_found_ids))
+        print(f"ℹ️ 總共撈出 {len(all_found_ids)} 個隱藏的 Google 雲端物件。")
+        
+        # 3. 挨個去跟 Google 伺服器驗證，哪一個是「115年6月」而且有「聯引」
+        for file_id in all_found_ids:
+            if len(file_id) < 20: # 太短的不是真正的 ID
+                continue
+                
+            # 藉由讀取公開的 export 或 edit 頁面來判定檔案標題
+            test_url = f"https://docs.google.com/spreadsheets/d/{file_id}/edit"
+            try:
+                meta_res = requests.get(test_url, headers=headers)
+                meta_text = meta_res.text
+                
+                # 同時比對網頁標題或內容是否包含關鍵字
+                if file_keyword in meta_text:
+                    print(f"🎯 成功匹配！找到符合關鍵字【{file_keyword}】的雲端檔案 (ID: {file_id})")
+                    
+                    # 4. 直接下載成 Excel (.xlsx)
+                    download_url = f"https://docs.google.com/spreadsheets/d/{file_id}/export?format=xlsx"
+                    print("📥 正在下載...")
+                    
+                    file_data = requests.get(download_url, headers=headers).content
+                    output_name = f"downloaded_{month_keyword}_{file_keyword}.xlsx"
+                    
+                    with open(output_name, "wb") as f:
+                        f.write(file_data)
+                        
+                    print(f"🎉 檔案成功儲存為: {output_name}")
+                    return
+            except:
+                continue
+                
+        print("❌ 搜尋完畢，未找到完全符合條件的檔案。")
+        
     except Exception as e:
-        print(f"💥 程式執行期間發生異常: {e}")
+        print(f"💥 發生錯誤: {e}")
 
 if __name__ == "__main__":
-    run_menu_scraper()
+    ultimate_google_sites_scraper()
